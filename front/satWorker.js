@@ -1,7 +1,5 @@
-// Web Worker for satellite position propagation
-// Import satellite.js first so compareWithSatelliteJS has the global `satellite`
+// webworker. as the sat calcs are done localy using a webworker to not make the page stutter the sats calcs are done sperately to the main render thread
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/satellite.js/1.3.0/satellite.min.js');
-// Import calculation library (absolute path ensures correct resolution)
 importScripts('/attemptlib/index.js');
 
 let sats = [];
