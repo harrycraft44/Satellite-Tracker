@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.1.3/satellite.min.js"></script>
+    <script src="https://unpkg.com/deck.gl@8.9.34/dist.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sat tracker</title>
+    <style>
+        html,body {
+            margin:0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        #deck-canvas{
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            background: #000;
+        }
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            right: -350px; 
+            width: 300px;
+            height: calc(100vh - 40px);
+            background-color: rgba(20, 20, 30, 0.85);
+            color: #eee;
+            padding: 20px;
+            border-radius: 10px 0 0 10px;
+            transition: right 0.5s ease-in-out;
+            font-family: monospace;
+            overflow-y: auto;
+            box-shadow: -5px 0px 15px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        .info-panel.visible {
+            right: 0; 
+        }
+        .info-panel h2 {
+            margin-top: 0;
+            border-bottom: 1px solid #555;
+            padding-bottom: 10px;
+        }
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            background: none;
+            border: none;
+            color: #eee;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        #info-content p {
+            margin: 8px 0;
+            word-wrap: break-word;
+        }
+        #info-content strong {
+            color: #0ff;
+        }
+    </style>
+    <script>
+    window.onload = function() {
+        const MAX_POSITIONS = 20000;
+        const satellitesRaw = []; 
+        let typedPositions = new Float32Array(MAX_POSITIONS * 2);
+        typedPositions.fill(NaN);
+
+        let selectedSatIndex = -1;
+
+        const starsLayer = new deck.ScatterplotLayer({
+            id: 'stars',
+            coordinateSystem: deck.COORDINATE_SYSTEM.LNGLAT,
+            data: Array.from({length: 5000}, () => ({
+                position: [Math.random() * 360 - 180, Math.random() * 180 - 90],
+                size: Math.random() * 0.5 + 0.1,
+                brightness: Math.random() * 0.5 + 0.5,
+            })),
+            getPosition: d => d.position,
+            getRadius: d => d.size,
+            getFillColor: d => [255, 255, 255, d.brightness * 150],
+            radiusMinPixels: 0.1,
+            radiusMaxPixels: 1.5,
+        });
+
+        const bitmapLayer = new deck.BitmapLayer({
+            id: 'earth-image',
+            coordinateSystem: deck.COORDINATE_SYSTEM.LNGLAT,
+            bounds: [-180, 90, 180, -90],
+            image: './earth.png',
+            opacity: 1
+        });
+
+        const tintLayer = new deck.SolidPolygonLayer({
+            id: 'tint-layer',
+            coordinateSystem: deck.COORDINATE_SYSTEM.LNGLAT,
+            data: [
+                [[-180, 90], [-180, -90], [180, -90], [180, 90]]
+            ],
+            getPolygon: d => d,
+            getFillColor: [0, 10, 20, 100]
+        });
+
+        let scatterLayer = new deck.ScatterplotLayer({
+            id: 'satellites',
+            coordinateSystem: deck.COORDINATE_SYSTEM.LNGLAT,
+            data: {
+                length: MAX_POSITIONS,
+                attributes: { getPosition: {value: typedPositions, size: 2} }
+            },
+            parameters: { depthTest: false },
+            pickable: true,
+            autoHighlight: true,
+            getRadius: (d, {index}) => index === selectedSatIndex ? 0.8 : 0.35,
+            getFillColor: (d, {index}) => index === selectedSatIndex ? [255, 80, 0, 255] : [0, 255, 255, 200],
+            radiusMinPixels: 2.5,
+            radiusMaxPixels: 8,
+            transitions: { getPosition: {duration: 1000, easing: t => t} }
+        });
+
+        const deckgl = new deck.DeckGL({
+            container: 'deck-canvas',
+            views: new deck.OrthographicView({id: 'map'}),
+            initialViewState: {target: [0, 0, 0], zoom: 1.5, minZoom: 1, maxZoom: 7},
+            controller: true,
+            layers: [starsLayer, bitmapLayer, tintLayer, scatterLayer],
+            getTooltip: ({index, layer}) => {
+                if (!layer || layer.id !== 'satellites') {
+                    return null;
+                }
+                
+                if (index < 0 || !satellitesRaw[index]) return null;
+
+                const {OBJECT_NAME} = satellitesRaw[index];
+                const position = layer.props.data.attributes.getPosition.value;
+                const x = position[index * 2];
+                const y = position[index * 2 + 1];
+
+                if (isNaN(x)) return null;
+
+                return `Name: ${OBJECT_NAME}\nLon: ${x.toFixed(2)}\u00b0\nLat: ${(-y).toFixed(2)}\u00b0`;
+            },
+            onClick: ({index, layer}) => {
+                if (index !== -1 && layer && layer.id === 'satellites') {
+                    selectedSatIndex = index;
+                    const satData = satellitesRaw[index];
+                    const infoPanel = document.getElementById('info-panel');
+                    const infoContent = document.getElementById('info-content');
+
+                    if (satData) {
+                        infoContent.innerHTML = `
+                            <p><strong>Name:</strong> ${satData.OBJECT_NAME || 'N/A'}</p>
+                            <p><strong>NORAD CAT ID:</strong> ${satData.NORAD_CAT_ID || 'N/A'}</p>
+                            <p><strong>Int'l Designator:</strong> ${satData.OBJECT_ID || 'N/A'}</p>
+                            <p><strong>Epoch:</strong> ${satData.EPOCH || 'N/A'}</p>
+                            <p><strong>TLE Line 1:</strong><br>${satData.TLE_LINE1 || 'N/A'}</p>
+                            <p><strong>TLE Line 2:</strong><br>${satData.TLE_LINE2 || 'N/A'}</p>
+                        `;
+                        infoPanel.classList.add('visible');
+                    }
+                } else {
+                    selectedSatIndex = -1;
+                    document.getElementById('info-panel').classList.remove('visible');
+                }
+                updateSatellitePositions();
+            }
+        });
+
+        document.getElementById('close-panel-btn').addEventListener('click', () => {
+            document.getElementById('info-panel').classList.remove('visible');
+        });
+
+        function updateSatellitePositions() {
+            const now = new Date();
+            const gmst = satellite.gstime(now);
+            const positions = new Float32Array(satellitesRaw.length * 2);
+            positions.fill(NaN);
+
+            for (let i = 0; i < satellitesRaw.length; i++) {
+                const sat = satellitesRaw[i];
+                const positionAndVelocity = satellite.propagate(sat.satrec, now);
+                const positionEci = positionAndVelocity.position;
+                if (positionEci) {
+                    const geodetic = satellite.eciToGeodetic(positionEci, gmst);
+                    positions[i * 2] = satellite.degreesLong(geodetic.longitude);
+                    positions[i * 2 + 1] = -satellite.degreesLat(geodetic.latitude);
+                }
+            }
+
+            const newScatterLayer = new deck.ScatterplotLayer({
+                id: 'satellites',
+                data: {
+                    length: satellitesRaw.length,
+                    attributes: { getPosition: {value: positions, size: 2} }
+                },
+                pickable: true,
+                autoHighlight: true,
+                getRadius: (d, {index}) => index === selectedSatIndex ? 0.8 : 0.35,
+                getFillColor: (d, {index}) => index === selectedSatIndex ? [255, 80, 0, 255] : [0, 255, 255, 200],
+                radiusMinPixels: 2.5
+            });
+
+            deckgl.setProps({layers: [starsLayer, bitmapLayer, tintLayer, newScatterLayer]});
+        }
+
+        async function loadSatellitesNDJSON(url) {
+            const response = await fetch(url);
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); 
+
+                for (const line of lines) {
+                    if (line.trim()) {
+                        try {
+                            const sat = JSON.parse(line);
+                            if (sat.DECAYED == 1) {
+                                continue;
+                            }
+
+                            if(sat.OBJECT_TYPE != 'PAYLOAD'){
+                                continue;
+                            }
+                            if (satellitesRaw.length < MAX_POSITIONS && sat.TLE_LINE1 && sat.TLE_LINE2) {
+                                sat.satrec = satellite.twoline2satrec(sat.TLE_LINE1, sat.TLE_LINE2);
+                                if (!sat.satrec.error) {
+                                    satellitesRaw.push(sat);
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Failed parse:', line, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        (async () => {
+            await loadSatellitesNDJSON('/satellites');
+            setInterval(updateSatellitePositions, 1000);
+        })();
+    };
+    </script>
+</head>
+<body>
+    <div id="deck-canvas"></div>
+    <div id="info-panel" class="info-panel">
+        <button id="close-panel-btn" class="close-btn">&times;</button>
+        <h2>Satellite Information</h2>
+        <div id="info-content"></div>
+    </div>
+</body>
+</html>
